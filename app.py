@@ -245,6 +245,14 @@ h1, h2, h3, h4, h5, h6 { font-family: 'Syne', sans-serif !important; }
     font-family: 'DM Mono', monospace;
     margin: 20px 0 10px;
 }
+
+/* Selectbox override */
+[data-testid="stSelectbox"] > div > div {
+    background: #13131F !important;
+    border: 1px solid #2A2A45 !important;
+    border-radius: 8px !important;
+    color: #E8E8F0 !important;
+}
 </style>
 """
 
@@ -275,6 +283,34 @@ def advance_index(client: Client, current: int) -> int:
     except Exception as e:
         st.error(f"Erro ao avançar bloco: {e}")
     return next_idx
+
+
+def set_index(client: Client, idx: int) -> bool:
+    try:
+        client.table("estado_sistema").update({"indice_bloco_atual": idx}).eq("id", 1).execute()
+        return True
+    except Exception as e:
+        st.error(f"Erro ao definir bloco: {e}")
+        return False
+
+
+def delete_last_registro(client: Client) -> bool:
+    try:
+        res = (
+            client.table("progresso_questoes")
+            .select("id")
+            .order("data_registro", desc=True)
+            .limit(1)
+            .execute()
+        )
+        if not res.data:
+            return False
+        last_id = res.data[0]["id"]
+        client.table("progresso_questoes").delete().eq("id", last_id).execute()
+        return True
+    except Exception as e:
+        st.error(f"Erro ao desfazer registro: {e}")
+        return False
 
 
 def save_questoes(client: Client, materia: str, quantidade: int) -> bool:
@@ -419,6 +455,42 @@ def main() -> None:
 
         daily_minutes = fetch_daily_minutes(client)
         st.markdown(render_kill_switch_status(daily_minutes), unsafe_allow_html=True)
+
+        st.markdown("---")
+        st.markdown('<div class="sidebar-section">Controles do Ciclo</div>', unsafe_allow_html=True)
+
+        # Voltar um bloco
+        if st.button("← Voltar um bloco", key="btn_voltar"):
+            current_idx = fetch_current_index(client)
+            prev_idx = (current_idx - 1) % len(CYCLE)
+            if set_index(client, prev_idx):
+                st.success(f"Voltou para bloco {prev_idx + 1}: {CYCLE[prev_idx]}")
+                st.rerun()
+
+        # Desfazer último registro
+        if st.button("↩ Desfazer último registro", key="btn_undo"):
+            current_idx = fetch_current_index(client)
+            prev_idx = (current_idx - 1) % len(CYCLE)
+            if delete_last_registro(client):
+                if set_index(client, prev_idx):
+                    st.success("Último registro removido e bloco revertido.")
+                    st.cache_data.clear()
+                    st.rerun()
+            else:
+                st.warning("Nenhum registro encontrado para desfazer.")
+
+        # Ir para bloco específico
+        st.markdown('<div style="margin-top:8px"></div>', unsafe_allow_html=True)
+        bloco_escolhido = st.selectbox(
+            "Ir para bloco:",
+            options=list(range(len(CYCLE))),
+            format_func=lambda i: f"{i+1:02d} · {CYCLE[i]}",
+            key="select_bloco",
+        )
+        if st.button("→ Ir para este bloco", key="btn_goto"):
+            if set_index(client, bloco_escolhido):
+                st.success(f"Bloco definido: {CYCLE[bloco_escolhido]}")
+                st.rerun()
 
         st.markdown("---")
         st.markdown('<div class="sidebar-section">Ciclo de Execução</div>', unsafe_allow_html=True)
