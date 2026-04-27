@@ -65,6 +65,15 @@ html, body, [data-testid="stAppViewContainer"] {
 [data-testid="stHeader"] { background: transparent !important; }
 [data-testid="stToolbar"] { display: none; }
 
+/* Garante que o botão de reabrir a sidebar sempre apareça */
+[data-testid="collapsedControl"] {
+    display: flex !important;
+    background: #13131F !important;
+    border: 1px solid #2A2A45 !important;
+    border-radius: 8px !important;
+    color: #E8E8F0 !important;
+}
+
 /* ── Typography ── */
 h1, h2, h3, h4, h5, h6 { font-family: 'Syne', sans-serif !important; }
 
