@@ -65,13 +65,19 @@ html, body, [data-testid="stAppViewContainer"] {
 [data-testid="stHeader"] { background: transparent !important; }
 [data-testid="stToolbar"] { display: none; }
 
-/* Garante que o botão de reabrir a sidebar sempre apareça */
-[data-testid="collapsedControl"] {
+/* Botão de reabrir sidebar — cobre todos os seletores possíveis do Streamlit */
+[data-testid="collapsedControl"],
+[data-testid="stSidebarCollapsedControl"],
+button[kind="header"],
+section[data-testid="stSidebarCollapsedControl"] {
     display: flex !important;
+    visibility: visible !important;
+    opacity: 1 !important;
     background: #13131F !important;
     border: 1px solid #2A2A45 !important;
     border-radius: 8px !important;
     color: #E8E8F0 !important;
+    z-index: 9999 !important;
 }
 
 /* ── Typography ── */
