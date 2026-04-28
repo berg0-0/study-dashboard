@@ -4,6 +4,7 @@ Streamlit + Supabase (supabase-py)
 """
 
 import os
+import json
 from datetime import date, datetime, timedelta
 
 import streamlit as st
@@ -11,22 +12,22 @@ from supabase import Client, create_client
 
 # ── Constants ────────────────────────────────────────────────────────────────
 
-CYCLE: list[str] = [
-    "Matemática",   # 0
-    "Linguagens",   # 1
-    "Redação",      # 2
-    "Matemática",   # 3
-    "Humanas",      # 4
-    "Matemática",   # 5
-    "Redação",      # 6
-    "Linguagens",   # 7
-    "Matemática",   # 8
-    "Natureza",     # 9
+DEFAULT_CYCLE: list[str] = [
+    "Matemática",
+    "Linguagens",
+    "Redação",
+    "Matemática",
+    "Humanas",
+    "Matemática",
+    "Redação",
+    "Linguagens",
+    "Matemática",
+    "Natureza",
 ]
 
 SUBJECTS: list[str] = ["Matemática", "Redação", "Linguagens", "Humanas", "Natureza"]
 
-KILL_SWITCH_MINUTES = 240  # 4 hours
+KILL_SWITCH_MINUTES = 240
 
 SUBJECT_COLORS: dict[str, str] = {
     "Matemática": "#6C63FF",
@@ -50,42 +51,35 @@ CUSTOM_CSS = """
 <style>
 @import url('https://fonts.googleapis.com/css2?family=DM+Mono:wght@400;500&family=Syne:wght@400;600;700;800&display=swap');
 
-/* ── Reset & base ── */
 html, body, [data-testid="stAppViewContainer"] {
     background-color: #0A0A0F !important;
     color: #E8E8F0 !important;
     font-family: 'Syne', sans-serif !important;
 }
-
 [data-testid="stSidebar"] {
     background-color: #0F0F1A !important;
     border-right: 1px solid #1E1E30 !important;
 }
-
-[data-testid="stHeader"] { background: transparent !important; }
+[data-testid="stHeader"] {
+    background: #0A0A0F !important;
+    border-bottom: 1px solid #1A1A2E !important;
+}
 [data-testid="stToolbar"] { display: none; }
-
-/* Botão de reabrir sidebar — cobre todos os seletores possíveis do Streamlit */
+[data-testid="stDecoration"] { display: none; }
+[data-testid="stHeader"] button,
 [data-testid="collapsedControl"],
-[data-testid="stSidebarCollapsedControl"],
-button[kind="header"],
-section[data-testid="stSidebarCollapsedControl"] {
+[data-testid="stSidebarCollapsedControl"] {
     display: flex !important;
     visibility: visible !important;
     opacity: 1 !important;
-    background: #13131F !important;
-    border: 1px solid #2A2A45 !important;
-    border-radius: 8px !important;
     color: #E8E8F0 !important;
     z-index: 9999 !important;
 }
+[data-testid="stHeader"] button:hover { opacity: 0.7 !important; }
 
-/* ── Typography ── */
 h1, h2, h3, h4, h5, h6 { font-family: 'Syne', sans-serif !important; }
-
 .mono { font-family: 'DM Mono', monospace; }
 
-/* ── Current block card ── */
 .block-card {
     background: linear-gradient(135deg, #13131F 0%, #1A1A2E 100%);
     border: 1px solid #2A2A45;
@@ -132,47 +126,20 @@ h1, h2, h3, h4, h5, h6 { font-family: 'Syne', sans-serif !important; }
     line-height: 1;
 }
 
-/* ── Progress dots ── */
-.cycle-dots {
-    display: flex;
-    gap: 6px;
-    margin-bottom: 28px;
-    flex-wrap: wrap;
-}
-.dot {
-    width: 28px;
-    height: 6px;
-    border-radius: 3px;
-    background: #1E1E30;
-    transition: background 0.3s;
-}
+.cycle-dots { display: flex; gap: 6px; margin-bottom: 28px; flex-wrap: wrap; }
+.dot { width: 28px; height: 6px; border-radius: 3px; background: #1E1E30; transition: background 0.3s; }
 .dot.active { background: var(--accent); }
 .dot.done   { background: #2A2A45; }
 
-/* ── Metric cards ── */
-.metric-row { display: flex; gap: 12px; margin-bottom: 24px; flex-wrap: wrap; }
 .metric-card {
-    flex: 1;
-    min-width: 120px;
     background: #13131F;
     border: 1px solid #1E1E30;
     border-radius: 12px;
     padding: 16px 20px;
 }
-.metric-card .val {
-    font-size: 28px;
-    font-weight: 700;
-    font-family: 'DM Mono', monospace;
-}
-.metric-card .lbl {
-    font-size: 11px;
-    color: #55556A;
-    letter-spacing: 2px;
-    text-transform: uppercase;
-    margin-top: 2px;
-}
+.metric-card .val { font-size: 28px; font-weight: 700; font-family: 'DM Mono', monospace; }
+.metric-card .lbl { font-size: 11px; color: #55556A; letter-spacing: 2px; text-transform: uppercase; margin-top: 2px; }
 
-/* ── Kill switch alert ── */
 .kill-alert {
     background: rgba(255, 60, 60, 0.08);
     border: 1px solid rgba(255, 60, 60, 0.4);
@@ -193,7 +160,25 @@ h1, h2, h3, h4, h5, h6 { font-family: 'Syne', sans-serif !important; }
     margin-top: 12px;
 }
 
-/* ── Streamlit widget overrides ── */
+/* Cycle builder drag item */
+.cycle-item {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    background: #13131F;
+    border: 1px solid #2A2A45;
+    border-radius: 8px;
+    padding: 8px 12px;
+    margin-bottom: 6px;
+    font-family: 'DM Mono', monospace;
+    font-size: 13px;
+}
+.cycle-item-dot {
+    width: 8px; height: 8px;
+    border-radius: 50%;
+    display: inline-block;
+}
+
 [data-testid="stNumberInput"] input,
 [data-testid="stTextInput"] input {
     background: #13131F !important;
@@ -208,7 +193,6 @@ h1, h2, h3, h4, h5, h6 { font-family: 'Syne', sans-serif !important; }
     box-shadow: 0 0 0 2px rgba(108, 99, 255, 0.2) !important;
 }
 
-/* Primary button */
 [data-testid="stButton"] > button[kind="primary"] {
     background: linear-gradient(135deg, #6C63FF, #9B59B6) !important;
     border: none !important;
@@ -224,7 +208,6 @@ h1, h2, h3, h4, h5, h6 { font-family: 'Syne', sans-serif !important; }
 }
 [data-testid="stButton"] > button[kind="primary"]:hover { opacity: 0.85 !important; }
 
-/* Secondary button */
 [data-testid="stButton"] > button[kind="secondary"] {
     background: #13131F !important;
     border: 1px solid #2A2A45 !important;
@@ -235,7 +218,6 @@ h1, h2, h3, h4, h5, h6 { font-family: 'Syne', sans-serif !important; }
     width: 100%;
 }
 
-/* Section dividers */
 .section-title {
     font-size: 10px;
     letter-spacing: 4px;
@@ -247,11 +229,9 @@ h1, h2, h3, h4, h5, h6 { font-family: 'Syne', sans-serif !important; }
     padding-bottom: 8px;
 }
 
-/* Chart area */
 [data-testid="stVegaLiteChart"] { border-radius: 12px; overflow: hidden; }
 .stPlotlyChart { border-radius: 12px; }
 
-/* Sidebar label */
 .sidebar-section {
     font-size: 10px;
     letter-spacing: 3px;
@@ -261,7 +241,6 @@ h1, h2, h3, h4, h5, h6 { font-family: 'Syne', sans-serif !important; }
     margin: 20px 0 10px;
 }
 
-/* Selectbox override */
 [data-testid="stSelectbox"] > div > div {
     background: #13131F !important;
     border: 1px solid #2A2A45 !important;
@@ -271,7 +250,7 @@ h1, h2, h3, h4, h5, h6 { font-family: 'Syne', sans-serif !important; }
 </style>
 """
 
-# ── Supabase client ───────────────────────────────────────────────────────────
+# ── Supabase ──────────────────────────────────────────────────────────────────
 
 @st.cache_resource
 def get_supabase() -> Client:
@@ -280,7 +259,20 @@ def get_supabase() -> Client:
     return create_client(url, key)
 
 
-# ── Data access layer ─────────────────────────────────────────────────────────
+# ── Cycle persistence (session + localStorage via query params) ───────────────
+
+def load_cycle() -> list[str]:
+    """Carrega ciclo customizado da session_state ou retorna o padrão."""
+    if "custom_cycle" not in st.session_state:
+        st.session_state.custom_cycle = DEFAULT_CYCLE.copy()
+    return st.session_state.custom_cycle
+
+
+def save_cycle(cycle: list[str]) -> None:
+    st.session_state.custom_cycle = cycle
+
+
+# ── Data access ───────────────────────────────────────────────────────────────
 
 def fetch_current_index(client: Client) -> int:
     try:
@@ -291,8 +283,20 @@ def fetch_current_index(client: Client) -> int:
         return 0
 
 
+def set_index(client: Client, idx: int) -> bool:
+    cycle = load_cycle()
+    safe_idx = idx % len(cycle)
+    try:
+        client.table("estado_sistema").update({"indice_bloco_atual": safe_idx}).eq("id", 1).execute()
+        return True
+    except Exception as e:
+        st.error(f"Erro ao definir bloco: {e}")
+        return False
+
+
 def advance_index(client: Client, current: int) -> int:
-    next_idx = (current + 1) % len(CYCLE)
+    cycle = load_cycle()
+    next_idx = (current + 1) % len(cycle)
     try:
         client.table("estado_sistema").update({"indice_bloco_atual": next_idx}).eq("id", 1).execute()
     except Exception as e:
@@ -300,12 +304,16 @@ def advance_index(client: Client, current: int) -> int:
     return next_idx
 
 
-def set_index(client: Client, idx: int) -> bool:
+def save_questoes(client: Client, materia: str, quantidade: int) -> bool:
     try:
-        client.table("estado_sistema").update({"indice_bloco_atual": idx}).eq("id", 1).execute()
+        client.table("progresso_questoes").insert({
+            "materia": materia,
+            "quantidade": quantidade,
+            "data_registro": datetime.utcnow().isoformat(),
+        }).execute()
         return True
     except Exception as e:
-        st.error(f"Erro ao definir bloco: {e}")
+        st.error(f"Erro ao salvar questões: {e}")
         return False
 
 
@@ -320,24 +328,10 @@ def delete_last_registro(client: Client) -> bool:
         )
         if not res.data:
             return False
-        last_id = res.data[0]["id"]
-        client.table("progresso_questoes").delete().eq("id", last_id).execute()
+        client.table("progresso_questoes").delete().eq("id", res.data[0]["id"]).execute()
         return True
     except Exception as e:
         st.error(f"Erro ao desfazer registro: {e}")
-        return False
-
-
-def save_questoes(client: Client, materia: str, quantidade: int) -> bool:
-    try:
-        client.table("progresso_questoes").insert({
-            "materia": materia,
-            "quantidade": quantidade,
-            "data_registro": datetime.utcnow().isoformat(),
-        }).execute()
-        return True
-    except Exception as e:
-        st.error(f"Erro ao salvar questões: {e}")
         return False
 
 
@@ -390,28 +384,33 @@ def save_tempo(client: Client, minutos: int) -> bool:
 
 # ── UI helpers ────────────────────────────────────────────────────────────────
 
-def render_cycle_dots(current_idx: int) -> str:
+def render_cycle_dots(current_idx: int, cycle: list[str]) -> str:
     dots = ""
-    for i in range(len(CYCLE)):
+    for i, s in enumerate(cycle):
+        color = SUBJECT_COLORS[s]
         if i == current_idx:
+            style = f"background:{color};"
             cls = "dot active"
         elif i < current_idx:
             cls = "dot done"
+            style = ""
         else:
             cls = "dot"
-        dots += f'<div class="{cls}" title="Bloco {i+1}: {CYCLE[i]}"></div>'
+            style = ""
+        dots += f'<div class="{cls}" style="{style}" title="Bloco {i+1}: {s}"></div>'
     return f'<div class="cycle-dots">{dots}</div>'
 
 
-def render_block_card(idx: int) -> str:
-    subject = CYCLE[idx]
+def render_block_card(idx: int, cycle: list[str]) -> str:
+    subject = cycle[idx]
     color   = SUBJECT_COLORS[subject]
     icon    = SUBJECT_ICONS[subject]
+    next_s  = cycle[(idx + 1) % len(cycle)]
     return f"""
 <div class="block-card" style="--accent: {color};">
-    <div class="block-label">Bloco Atual · {idx + 1} de {len(CYCLE)}</div>
+    <div class="block-label">Bloco Atual · {idx + 1} de {len(cycle)}</div>
     <div class="block-subject" style="color:{color};">{subject}</div>
-    <div class="block-index mono">CICLO #{idx + 1:02d} — próximo: {CYCLE[(idx + 1) % len(CYCLE)]}</div>
+    <div class="block-index mono">CICLO #{idx + 1:02d} — próximo: {next_s}</div>
     <div class="subject-icon">{icon}</div>
 </div>
 """
@@ -422,20 +421,119 @@ def render_kill_switch_status(total_minutes: int) -> str:
     minutes = total_minutes % 60
     label   = f"{hours}h {minutes:02d}m"
     if total_minutes >= KILL_SWITCH_MINUTES:
-        return f"""
-<div class="kill-alert">
-    ⚠ KILL SWITCH — {label} estudados hoje.<br>
-    Limite de 4h atingido. Descanse para consolidar o aprendizado.
-</div>"""
+        return f'<div class="kill-alert">⚠ KILL SWITCH — {label} estudados hoje.<br>Limite de 4h atingido. Descanse.</div>'
     remaining = KILL_SWITCH_MINUTES - total_minutes
     r_h, r_m = remaining // 60, remaining % 60
-    return f"""
-<div class="kill-ok">
-    ✓ {label} estudados — {r_h}h {r_m:02d}m restantes hoje.
-</div>"""
+    return f'<div class="kill-ok">✓ {label} estudados — {r_h}h {r_m:02d}m restantes hoje.</div>'
 
 
-# ── Main app ──────────────────────────────────────────────────────────────────
+def render_cycle_preview(cycle: list[str]) -> str:
+    items = ""
+    for i, s in enumerate(cycle):
+        color = SUBJECT_COLORS[s]
+        icon  = SUBJECT_ICONS[s]
+        items += (
+            f'<div class="cycle-item">'
+            f'<span class="cycle-item-dot" style="background:{color};"></span>'
+            f'<span style="color:#44445A;font-size:11px;">{i+1:02d}</span>'
+            f'<span style="color:{color};">{icon}</span>'
+            f'<span style="color:#C8C8D8;">{s}</span>'
+            f'</div>'
+        )
+    return items
+
+
+# ── Cycle builder UI ──────────────────────────────────────────────────────────
+
+def render_cycle_builder(cycle: list[str]) -> None:
+    st.markdown('<div class="sidebar-section">🛠 Personalizar Ciclo</div>', unsafe_allow_html=True)
+
+    with st.expander("Editar ordem do ciclo", expanded=False):
+        st.caption("Monte seu ciclo adicionando blocos na ordem desejada.")
+
+        # Preview atual
+        st.markdown(render_cycle_preview(cycle), unsafe_allow_html=True)
+
+        st.markdown("---")
+
+        # Adicionar bloco
+        col_add, col_btn = st.columns([2, 1])
+        with col_add:
+            nova_materia = st.selectbox(
+                "Adicionar matéria:",
+                SUBJECTS,
+                key="sb_nova_materia",
+                label_visibility="collapsed",
+            )
+        with col_btn:
+            if st.button("＋ Add", key="btn_add_bloco"):
+                new_cycle = cycle + [nova_materia]
+                save_cycle(new_cycle)
+                st.rerun()
+
+        # Remover último bloco
+        col_rem, col_rst = st.columns(2)
+        with col_rem:
+            if st.button("－ Remover último", key="btn_rem_ultimo"):
+                if len(cycle) > 1:
+                    save_cycle(cycle[:-1])
+                    st.rerun()
+                else:
+                    st.warning("O ciclo precisa ter ao menos 1 bloco.")
+
+        # Mover bloco (subir/descer por índice)
+        st.markdown("**Reordenar bloco:**")
+        col_idx, col_up, col_dn = st.columns([2, 1, 1])
+        with col_idx:
+            bloco_idx = st.number_input(
+                "Nº do bloco",
+                min_value=1,
+                max_value=len(cycle),
+                value=1,
+                step=1,
+                key="sb_bloco_idx",
+                label_visibility="collapsed",
+            )
+        with col_up:
+            if st.button("↑ Subir", key="btn_up"):
+                i = int(bloco_idx) - 1
+                if i > 0:
+                    c = cycle.copy()
+                    c[i], c[i - 1] = c[i - 1], c[i]
+                    save_cycle(c)
+                    st.rerun()
+        with col_dn:
+            if st.button("↓ Descer", key="btn_dn"):
+                i = int(bloco_idx) - 1
+                if i < len(cycle) - 1:
+                    c = cycle.copy()
+                    c[i], c[i + 1] = c[i + 1], c[i]
+                    save_cycle(c)
+                    st.rerun()
+
+        # Remover bloco específico
+        if st.button("🗑 Remover bloco selecionado", key="btn_rem_spec"):
+            i = int(bloco_idx) - 1
+            if len(cycle) > 1:
+                c = cycle.copy()
+                c.pop(i)
+                save_cycle(c)
+                st.rerun()
+            else:
+                st.warning("O ciclo precisa ter ao menos 1 bloco.")
+
+        st.markdown("---")
+
+        # Restaurar padrão
+        with col_rst:
+            if st.button("↺ Padrão", key="btn_rst"):
+                save_cycle(DEFAULT_CYCLE.copy())
+                st.rerun()
+
+        st.caption(f"**{len(cycle)} blocos** no ciclo atual.")
+
+
+# ── Main ──────────────────────────────────────────────────────────────────────
 
 def main() -> None:
     st.set_page_config(
@@ -446,19 +544,20 @@ def main() -> None:
     )
     st.markdown(CUSTOM_CSS, unsafe_allow_html=True)
 
-    client = get_supabase()
+    client  = get_supabase()
+    cycle   = load_cycle()
 
-    # ── Sidebar — Kill Switch ─────────────────────────────────────────────────
+    # ── Sidebar ───────────────────────────────────────────────────────────────
     with st.sidebar:
         st.markdown("## ∑ ENEM Queue")
-        st.markdown('<div class="sidebar-section">Kill Switch · Tempo Diário</div>', unsafe_allow_html=True)
 
+        # Kill Switch
+        st.markdown('<div class="sidebar-section">Kill Switch · Tempo Diário</div>', unsafe_allow_html=True)
         col_h, col_m = st.columns(2)
         with col_h:
             horas = st.number_input("Horas", min_value=0, max_value=12, value=0, step=1, key="sb_h")
         with col_m:
             mins  = st.number_input("Min", min_value=0, max_value=59, value=0, step=5, key="sb_m")
-
         if st.button("Registrar Tempo", key="btn_tempo"):
             total_input = int(horas) * 60 + int(mins)
             if total_input > 0:
@@ -467,25 +566,24 @@ def main() -> None:
                     st.cache_data.clear()
             else:
                 st.warning("Insira um tempo maior que zero.")
-
         daily_minutes = fetch_daily_minutes(client)
         st.markdown(render_kill_switch_status(daily_minutes), unsafe_allow_html=True)
 
         st.markdown("---")
+
+        # Controles do ciclo
         st.markdown('<div class="sidebar-section">Controles do Ciclo</div>', unsafe_allow_html=True)
 
-        # Voltar um bloco
         if st.button("← Voltar um bloco", key="btn_voltar"):
             current_idx = fetch_current_index(client)
-            prev_idx = (current_idx - 1) % len(CYCLE)
+            prev_idx = (current_idx - 1) % len(cycle)
             if set_index(client, prev_idx):
-                st.success(f"Voltou para bloco {prev_idx + 1}: {CYCLE[prev_idx]}")
+                st.success(f"Voltou para bloco {prev_idx + 1}: {cycle[prev_idx]}")
                 st.rerun()
 
-        # Desfazer último registro
         if st.button("↩ Desfazer último registro", key="btn_undo"):
             current_idx = fetch_current_index(client)
-            prev_idx = (current_idx - 1) % len(CYCLE)
+            prev_idx = (current_idx - 1) % len(cycle)
             if delete_last_registro(client):
                 if set_index(client, prev_idx):
                     st.success("Último registro removido e bloco revertido.")
@@ -494,47 +592,52 @@ def main() -> None:
             else:
                 st.warning("Nenhum registro encontrado para desfazer.")
 
-        # Ir para bloco específico
         st.markdown('<div style="margin-top:8px"></div>', unsafe_allow_html=True)
         bloco_escolhido = st.selectbox(
             "Ir para bloco:",
-            options=list(range(len(CYCLE))),
-            format_func=lambda i: f"{i+1:02d} · {CYCLE[i]}",
+            options=list(range(len(cycle))),
+            format_func=lambda i: f"{i+1:02d} · {cycle[i]}",
             key="select_bloco",
         )
         if st.button("→ Ir para este bloco", key="btn_goto"):
             if set_index(client, bloco_escolhido):
-                st.success(f"Bloco definido: {CYCLE[bloco_escolhido]}")
+                st.success(f"Bloco definido: {cycle[bloco_escolhido]}")
                 st.rerun()
 
         st.markdown("---")
+
+        # Cycle builder
+        render_cycle_builder(cycle)
+
+        # Preview do ciclo atual
         st.markdown('<div class="sidebar-section">Ciclo de Execução</div>', unsafe_allow_html=True)
-        for i, s in enumerate(CYCLE):
-            color = SUBJECT_COLORS[s]
+        current_idx_preview = fetch_current_index(client)
+        for i, s in enumerate(cycle):
+            color   = SUBJECT_COLORS[s]
+            is_curr = i == current_idx_preview
+            weight  = "700" if is_curr else "400"
+            bg      = f"background:rgba({int(color[1:3],16)},{int(color[3:5],16)},{int(color[5:7],16)},0.08);border-radius:6px;padding:2px 6px;" if is_curr else "padding:2px 6px;"
             st.markdown(
-                f'<div style="font-family:\'DM Mono\',monospace;font-size:12px;'
-                f'color:#44445A;padding:2px 0;">'
-                f'<span style="color:{color};font-weight:600;">{i+1:02d}</span> · {s}</div>',
+                f'<div style="font-family:\'DM Mono\',monospace;font-size:12px;color:#44445A;{bg}margin-bottom:2px;">'
+                f'<span style="color:{color};font-weight:{weight};">{i+1:02d}</span> · '
+                f'<span style="color:{"#E8E8F0" if is_curr else "#88889A"};font-weight:{weight};">{s}</span>'
+                f'{"  ◀" if is_curr else ""}</div>',
                 unsafe_allow_html=True,
             )
 
     # ── Main content ──────────────────────────────────────────────────────────
     idx     = fetch_current_index(client)
-    subject = CYCLE[idx]
+    safe_idx = idx % len(cycle)
+    subject  = cycle[safe_idx]
 
-    # Block card + cycle progress
-    st.markdown(render_block_card(idx), unsafe_allow_html=True)
-    st.markdown(render_cycle_dots(idx), unsafe_allow_html=True)
+    st.markdown(render_block_card(safe_idx, cycle), unsafe_allow_html=True)
+    st.markdown(render_cycle_dots(safe_idx, cycle), unsafe_allow_html=True)
 
-    # Input + action
     col_input, col_btn = st.columns([3, 1], gap="medium")
     with col_input:
         quantidade = st.number_input(
             "Questões resolvidas neste bloco",
-            min_value=1,
-            max_value=500,
-            value=10,
-            step=1,
+            min_value=1, max_value=500, value=10, step=1,
             help="Quantas questões você resolveu agora?",
         )
     with col_btn:
@@ -543,18 +646,17 @@ def main() -> None:
 
     if avancar:
         if save_questoes(client, subject, int(quantidade)):
-            new_idx = advance_index(client, idx)
-            st.success(f"✓ {int(quantidade)} questões de **{subject}** salvas. Próximo bloco: **{CYCLE[new_idx]}**.")
+            new_idx = advance_index(client, safe_idx)
+            st.success(f"✓ {int(quantidade)} questões de **{subject}** salvas. Próximo: **{cycle[new_idx]}**.")
             st.cache_data.clear()
             st.rerun()
 
     # ── Weekly chart ─────────────────────────────────────────────────────────
     st.markdown('<div class="section-title">Questões por Matéria — Últimos 7 Dias</div>', unsafe_allow_html=True)
 
-    weekly = fetch_weekly_totals(client)
+    weekly     = fetch_weekly_totals(client)
     total_week = sum(weekly.values())
 
-    # Summary metric cards
     cols = st.columns(len(SUBJECTS))
     for col, s in zip(cols, SUBJECTS):
         with col:
@@ -568,29 +670,25 @@ def main() -> None:
                 unsafe_allow_html=True,
             )
 
-    st.markdown(f'<div style="text-align:right;font-family:\'DM Mono\',monospace;'
-                f'font-size:12px;color:#44445A;margin-bottom:16px;">'
-                f'Total semanal: <span style="color:#E8E8F0;font-weight:600;">{total_week} questões</span></div>',
-                unsafe_allow_html=True)
+    st.markdown(
+        f'<div style="text-align:right;font-family:\'DM Mono\',monospace;font-size:12px;color:#44445A;margin-bottom:16px;">'
+        f'Total semanal: <span style="color:#E8E8F0;font-weight:600;">{total_week} questões</span></div>',
+        unsafe_allow_html=True,
+    )
 
-    # Plotly bar chart
     try:
         import plotly.graph_objects as go
-
-        fig = go.Figure(
-            go.Bar(
-                x=SUBJECTS,
-                y=[weekly[s] for s in SUBJECTS],
-                marker_color=[SUBJECT_COLORS[s] for s in SUBJECTS],
-                marker_line_width=0,
-                text=[str(weekly[s]) for s in SUBJECTS],
-                textposition="outside",
-                textfont=dict(family="DM Mono", size=12, color="#E8E8F0"),
-            )
-        )
+        fig = go.Figure(go.Bar(
+            x=SUBJECTS,
+            y=[weekly[s] for s in SUBJECTS],
+            marker_color=[SUBJECT_COLORS[s] for s in SUBJECTS],
+            marker_line_width=0,
+            text=[str(weekly[s]) for s in SUBJECTS],
+            textposition="outside",
+            textfont=dict(family="DM Mono", size=12, color="#E8E8F0"),
+        ))
         fig.update_layout(
-            plot_bgcolor="#0A0A0F",
-            paper_bgcolor="#0A0A0F",
+            plot_bgcolor="#0A0A0F", paper_bgcolor="#0A0A0F",
             font=dict(family="Syne", color="#888899"),
             xaxis=dict(showgrid=False, tickfont=dict(size=12)),
             yaxis=dict(showgrid=True, gridcolor="#1A1A2E", zeroline=False),
@@ -598,11 +696,9 @@ def main() -> None:
             height=260,
         )
         st.plotly_chart(fig, use_container_width=True, config={"displayModeBar": False})
-
     except ImportError:
-        chart_data = {s: [weekly[s]] for s in SUBJECTS}
         import pandas as pd
-        st.bar_chart(pd.DataFrame(chart_data))
+        st.bar_chart(pd.DataFrame({s: [weekly[s]] for s in SUBJECTS}))
 
 
 if __name__ == "__main__":
